@@ -8,3 +8,4 @@ c1
 c2
 
 c1 master
+c2 master
