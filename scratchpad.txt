@@ -11,7 +11,3 @@ c1 master
 c2 master
 c1 m
 c2 m
-
-
-f1 commit 1
-f1 com 2 
