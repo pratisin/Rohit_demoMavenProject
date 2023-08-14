@@ -1,0 +1,251 @@
+# This workflow will build a Java project with Maven, and cache/restore any dependencies to improve the workflow execution time
+# For more information see: https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-maven
+
+name: GitHub Actions Workflow with SNOW custom tasks
+
+# on:
+#   push:
+#     branches: [ main ]
+#   pull_request:
+#      branches: [ master ]
+#   pull_request:
+#     types: [opened, synchronize, reopened]
+
+on: workflow_dispatch
+#  pull_request_target:
+#    types:
+#      - closed
+
+jobs:
+
+    build:
+        name: Build
+        runs-on: ubuntu-latest
+        steps:           
+            - uses: actions/checkout@v2
+              with:
+                  fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+            
+            - name: Set up JDK 11
+              uses: actions/setup-java@v1
+              with:
+                  java-version: 11
+            
+            - name: Cache SonarCloud packages
+              uses: actions/cache@v1
+              with:
+                  path: ~/.sonar/cache
+                  key: ${{ runner.os }}-sonar
+                  restore-keys: ${{ runner.os }}-sonar
+            
+            - name: Cache Maven packages
+              uses: actions/cache@v1
+              with:
+                  path: ~/.m2
+                  key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+                  restore-keys: ${{ runner.os }}-m2
+
+    test:
+        name: Test
+        needs: build
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v2
+              with:
+                  fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+
+            - name: List current directory
+              run: ls -a
+
+            - name: Run Tests with Maven
+              run: mvn -B test --file pom.xml
+
+
+            - name: What's in the target directory
+              run: |
+                    cd target
+                    ls -a
+
+            - name: Sonar Cloud Analysis
+              if: success() # always() failure() success()
+              run: >
+                  mvn -B verify -DskipTests sonar:sonar
+                  -Dsonar.projectKey=$SONAR_PROJECT_KEY
+                  -Dsonar.organization=$SONAR_ORG_KEY
+                  -Dsonar.host.url=$SONAR_URL
+                  -Dsonar.login=$SONAR_TOKEN
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GHP_TOKEN }}
+                  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+                  SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+                  SONAR_URL: ${{ secrets.SONAR_URL }}
+                  SONAR_ORG_KEY: ${{ secrets.SONAR_ORG_KEY }}
+
+            - name: ServiceNow DevOps Sonar Scan Results
+            # You may pin to the exact commit or the version.
+            # uses: ServiceNow/servicenow-devops-sonar@0ed32c6471c8191f264d4bd464f14c858032354a
+              uses: ServiceNow/servicenow-devops-sonar@main
+              with:
+                  # ServiceNow Instance URL
+                  instance-url: ${{ secrets.SN_INSTANCE_URL }}
+                  # Devops Integration User Name
+                  devops-integration-user-name: ${{ secrets.SN_DEVOPS_USER }}
+                  # Devops Integration User Password
+                  devops-integration-user-password: ${{ secrets.SN_DEVOPS_PASSWORD }}
+                  # Orchestration Tool Id
+                  tool-id: ${{ secrets.SN_ORCHESTRATION_TOOL_ID }}
+                  # Github Context
+                  context-github: ${{ toJSON(github) }}
+                  # Display Name of the Job
+                  job-name: 'Test'
+                  # Sonar Host URL
+                  sonar-host-url: ${{ secrets.SONAR_URL }}
+                  # Sonar Project Key
+                  sonar-project-key: ${{ secrets.SONAR_PROJECT_KEY }}
+
+
+            - name: ServiceNow DevOps Unit Test Results
+            # You may pin to the exact commit or the version.
+            # uses: ServiceNow/servicenow-devops-test-report@6c7ef85f6aedfb7ab17e4d17c52c14c5f2f455fd
+              uses: ServiceNow/servicenow-devops-test-report@main
+              with:
+                  # Devops Integration User Name
+                  devops-integration-user-name: ${{ secrets.SN_DEVOPS_USER }}
+                  # Devops Integration User Password
+                  devops-integration-user-password: ${{ secrets.SN_DEVOPS_PASSWORD }}
+                  # ServiceNow Instance Name
+                  instance-url: ${{ secrets.SN_INSTANCE_URL }}
+                  # Orchestration Tool Id
+                  tool-id: ${{ secrets.SN_ORCHESTRATION_TOOL_ID }}
+                  # Job Name
+                  job-name: 'Test' # Should be same name as declared in 'name' clause of the current Stage
+                  # Github Context
+                  context-github: ${{ toJSON(github) }}
+                  # JUnit xml report file name with path
+                  xml-report-filename: target/surefire-reports/testng-results.xml # if only JUnit tests, use target/surefire-reports/testng-results.xml
+                                                                                  # if both JUnit & TestNG tests, use target/surefire-reports/testng-junit-results/testng-results.xml
+                  # GitHub Custom Action
+                  test-type: # optional, default is JUnit
+
+    integrationTest:
+        name: Integration Tests
+        needs: test
+        runs-on: ubuntu-latest
+        steps:
+            - name: ServiceNow DevOps Register Artifact
+            # You may pin to the exact commit or the version.
+            # uses: ServiceNow/servicenow-devops-register-artifact@6312802fd9eecd4a57b13216e968b8cae4ff6fe4
+              uses: ServiceNow/servicenow-devops-register-artifact@main
+              with:
+                  # Devops Integration User Name
+                  devops-integration-user-name: ${{ secrets.SN_DEVOPS_USER }}
+                  # Devops Integration User Password
+                  devops-integration-user-password: ${{ secrets.SN_DEVOPS_PASSWORD }}
+                  # ServiceNow Instance URL
+                  instance-url: ${{ secrets.SN_INSTANCE_URL }}
+                  # Orchestration Tool Id
+                  tool-id: ${{ secrets.SN_ORCHESTRATION_TOOL_ID }}
+                  # Display Name of the Job
+                  job-name: 'Integration Tests'
+                  # Github Context
+                  context-github: ${{ toJSON(github) }}
+                  # List of Artifacts to be registered
+                  artifacts: '[
+                      {
+                          "name": "app-devops.jar",
+                          "version": "1.${{ github.run_number }}",
+                          "semanticVersion": "1.${{ github.run_number }}.0",
+                          "repositoryName": "${{ github.repository }}"
+                      },
+                      {
+                          "name": "app-devops-integrations.jar",
+                          "version": "1.${{ github.run_number }}",
+                          "semanticVersion": "1.${{ github.run_number }}.0",
+                          "repositoryName": "${{ github.repository }}"
+                      },
+                      {
+                          "name": "app-devops-workspace.jar",
+                          "version": "1.${{ github.run_number }}",
+                          "semanticVersion": "1.${{ github.run_number }}.0",
+                          "repositoryName": "${{ github.repository }}"
+                      }
+                  ]'
+
+            - name: ServiceNow DevOps Register Package
+            # You may pin to the exact commit or the version.
+            # uses: ServiceNow/servicenow-devops-register-package@96a351e6f06e592011b9bdd7da5b2af26506d86b
+              uses: ServiceNow/servicenow-devops-register-package@main
+              with:
+                  # ServiceNow Devops Integration User Name
+                  devops-integration-user-name: ${{ secrets.SN_DEVOPS_USER }}
+                  # ServiceNow Devops Integration User Password
+                  devops-integration-user-password: ${{ secrets.SN_DEVOPS_PASSWORD }}
+                  # ServiceNow Instance URL
+                  instance-url: ${{ secrets.SN_INSTANCE_URL }}
+                  # Orchestration Tool Id of the tool created in ServiceNow
+                  tool-id: ${{ secrets.SN_ORCHESTRATION_TOOL_ID }}
+                  # Github Context
+                  context-github: ${{ toJSON(github) }}
+                  # List of Artifacts in JSON format
+                  artifacts: '[
+                      {
+                          "name": "app-devops.jar",
+                          "version": "1.${{ github.run_number }}",
+                          "semanticVersion": "1.${{ github.run_number }}.0",
+                          "repositoryName": "${{ github.repository }}"
+                      }
+                  ]'
+                  # Name of the Package that contains list of artifacts
+                  package-name: 'app-devops-change-velocity.war'
+                  # Display Name of Job
+                  job-name: 'Integration Tests'
+
+    deploy:
+        name: Deploy
+        needs: integrationTest
+        runs-on: ubuntu-latest
+        steps:     
+            - name: ServiceNow DevOps Change Automation
+            # You may pin to the exact commit or the version.
+            # uses: ServiceNow/servicenow-devops-change@0f57435999463cc1dea44bde4f5eca9879474b85
+              uses: ServiceNow/servicenow-devops-change@dev
+              with:
+                  # ServiceNow Instance URL
+                  instance-url: ${{ secrets.SN_INSTANCE_URL }}
+                  # Devops Integration User Name
+                  devops-integration-user-name: ${{ secrets.SN_DEVOPS_USER }}
+                  # Devops Integration User Password
+                  devops-integration-user-password: ${{ secrets.SN_DEVOPS_PASSWORD }}
+                  # Orchestration Tool Id
+                  tool-id: ${{ secrets.SN_ORCHESTRATION_TOOL_ID }}
+                  # Display Name of the Job
+                  job-name: 'Deploy'
+                  # Github Context
+                  context-github: ${{ toJSON(github) }}
+                  # The max. time in seconds to wait until the action should fail.
+                  timeout: 3600 # optional, default is 3600
+                  # The time in seconds to wait between trying the API.
+                  interval: 100 # optional, default is 100
+                  # The customized inputs to create change with the requested details.
+                  change-request: '{
+                      "setCloseCode": "true",
+                      "attributes": {
+                          "short_description": "Automated Software Deployment",
+                          "description": "Automated Software Deployment.",
+                          "assignment_group": "a715cd759f2002002920bde8132e7018",
+                          "implementation_plan": "Software update is tested and results can be found in Test Summaries Tab.",
+                          "backout_plan": "When software fails in production, the previous software release will be re-deployed.",
+                          "test_plan": "Testing if the software was successfully deployed"
+                      }
+                  }'
+
+#             - name: Run deployment scripts
+#               run: echo Completed Deployment
+
+    postdeploy:
+        name: Post Deploy
+        needs: deploy
+        runs-on: ubuntu-latest
+        steps:
+            - name: Run deployment scripts
+              run: echo Completed Deployment
